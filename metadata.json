@@ -1,0 +1,8 @@
+
+{
+  "name": "SnapPrint Pro - Passport Photo Maker",
+  "description": "Professional-grade client-side passport and postcard photo generator with background removal and printable A4 layout management.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

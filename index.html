@@ -6,10 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SnapPrint Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     
     <!-- MediaPipe Selfie Segmentation -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    
+    <!-- jsPDF for PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <style>
         body {
@@ -20,7 +23,19 @@
             .no-print { display: none !important; }
             .print-only { display: block !important; }
             body { background: white; margin: 0; padding: 0; }
-            @page { margin: 0; }
+            @page { 
+                margin: 0; 
+                size: A4 portrait;
+            }
+            .a4-print-page {
+                width: 210mm;
+                height: 297mm;
+                page-break-after: always;
+                overflow: hidden;
+            }
+            .a4-print-page:last-child {
+                page-break-after: auto;
+            }
         }
         .a4-sheet {
             width: 210mm;
@@ -31,34 +46,19 @@
             position: relative;
             overflow: hidden;
         }
-        .preview-container {
-            transform: scale(0.4);
-            transform-origin: top center;
-        }
-        @media (min-width: 1024px) {
-            .preview-container {
-                transform: scale(0.7);
-            }
-        }
-        @media (min-width: 1280px) {
-            .preview-container {
-                transform: scale(0.9);
-            }
-        }
     </style>
 
-<link rel="stylesheet" href="/index.css">
-<script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
-  }
-}
-</script>
-  <script type="module" crossorigin src="/SmartPhotoStudio/assets/index-DMcMeZsl.js"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
+        "react/": "https://esm.sh/react@^18.2.0/",
+        "react": "https://esm.sh/react@^18.2.0",
+        "lucide-react": "https://esm.sh/lucide-react@^0.344.0"
+      }
+    }
+    </script>
+  <script type="module" crossorigin src="/SmartPhotoStudio/assets/index-DSe1dRPb.js"></script>
 </head>
 <body>
     <div id="root"></div>

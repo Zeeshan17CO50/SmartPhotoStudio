@@ -6,7 +6,6 @@ import {
   Printer, 
   Download, 
   Scissors, 
-  Layers, 
   Image as ImageIcon,
   Palette,
   LayoutGrid,
@@ -19,10 +18,14 @@ import {
   Plus,
   Minus,
   CheckCircle2,
-  ChevronRight
+  FileText,
+  Settings
 } from 'lucide-react';
 import { PhotoSize, PHOTO_SPECS, UploadedPhoto, A4_WIDTH_MM, A4_HEIGHT_MM, MM_TO_PX } from './types';
 import { removeBackground, preparePhoto } from './utils/imageProcessor';
+
+// Global jsPDF from script tag
+declare const jspdf: any;
 
 const DEFAULT_PASSPORT_COUNT = 30;
 const COLOR_PRESETS = [
@@ -39,9 +42,12 @@ const App: React.FC = () => {
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
   const [activeSheets, setActiveSheets] = useState<string[]>([]);
   
+  // Border Settings
+  const [useBorder, setUseBorder] = useState(false);
+  const [borderThicknessMm, setBorderThicknessMm] = useState(0.2);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-distribute Passport counts to total 30 on first upload
   useEffect(() => {
     if (photos.length > 0 && photos.every(p => p.passportCount === 0 && p.stampCount === 0)) {
       const baseCount = Math.floor(DEFAULT_PASSPORT_COUNT / photos.length);
@@ -53,6 +59,19 @@ const App: React.FC = () => {
       })));
     }
   }, [photos.length]);
+
+  // Handle reprocessing preview when global border settings change
+  useEffect(() => {
+    if (photos.length > 0) {
+      photos.forEach(photo => {
+        const source = photo.isRemovingBg && photo.transparentUrl ? photo.transparentUrl : photo.originalUrl;
+        preparePhoto(source, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY, { useBorder, thicknessMm: borderThicknessMm })
+          .then(url => {
+            setPhotos(current => current.map(p => p.id === photo.id ? { ...p, processedUrl: url } : p));
+          });
+      });
+    }
+  }, [useBorder, borderThicknessMm]);
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
@@ -85,7 +104,7 @@ const App: React.FC = () => {
       const photo = next.find(p => p.id === id);
       if (photo) {
         const source = photo.isRemovingBg && photo.transparentUrl ? photo.transparentUrl : photo.originalUrl;
-        preparePhoto(source, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY)
+        preparePhoto(source, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY, { useBorder, thicknessMm: borderThicknessMm })
           .then(url => {
             setPhotos(current => current.map(p => p.id === id ? { ...p, processedUrl: url } : p));
           });
@@ -111,13 +130,13 @@ const App: React.FC = () => {
       setProcessingIds(prev => new Set(prev).add(id));
       try {
         const transparentUrl = await removeBackground(photo.originalUrl);
-        const finalPreview = await preparePhoto(transparentUrl, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY);
+        const finalPreview = await preparePhoto(transparentUrl, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY, { useBorder, thicknessMm: borderThicknessMm });
         setPhotos(prev => prev.map(p => p.id === id ? { ...p, isRemovingBg: true, transparentUrl, processedUrl: finalPreview } : p));
       } catch (err) { console.error(err); } 
       finally { setProcessingIds(prev => { const n = new Set(prev); n.delete(id); return n; }); }
     } else {
       const source = targetState ? (photo.transparentUrl || photo.originalUrl) : photo.originalUrl;
-      const finalPreview = await preparePhoto(source, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY);
+      const finalPreview = await preparePhoto(source, PhotoSize.PASSPORT, photo.bgColor, photo.zoom, photo.offsetX, photo.offsetY, { useBorder, thicknessMm: borderThicknessMm });
       setPhotos(prev => prev.map(p => p.id === id ? { ...p, isRemovingBg: targetState, processedUrl: finalPreview } : p));
     }
   };
@@ -147,11 +166,13 @@ const App: React.FC = () => {
     };
 
     let { canvas, ctx } = createNewPage();
-    let curY = MM_TO_PX(10);
-    const marginX = MM_TO_PX(10);
-    const gap = MM_TO_PX(1.5);
+    
+    const topMargin = MM_TO_PX(6);
+    const bottomMargin = MM_TO_PX(5);
+    const horizontalMargin = MM_TO_PX(10);
+    const gap = MM_TO_PX(1.2); 
 
-    // Order of formats
+    let curY = topMargin;
     const order = [PhotoSize.PASSPORT, PhotoSize.STAMP];
 
     for (const size of order) {
@@ -160,33 +181,32 @@ const App: React.FC = () => {
       const spec = PHOTO_SPECS[size];
       const pW = MM_TO_PX(spec.widthMm);
       const pH = MM_TO_PX(spec.heightMm);
-      const maxCols = Math.floor((canvas.width - 2 * marginX + gap) / (pW + gap));
       
-      // Calculate photos for this section
+      const maxCols = Math.floor((canvas.width - 2 * horizontalMargin + gap) / (pW + gap));
+      
       const photosForSize = await Promise.all(photos.map(async p => {
         const count = size === PhotoSize.PASSPORT ? p.passportCount : p.stampCount;
         if (count === 0) return null;
         const source = p.isRemovingBg && p.transparentUrl ? p.transparentUrl : p.originalUrl;
-        const url = await preparePhoto(source, size, p.bgColor, p.zoom, p.offsetX, p.offsetY);
+        const url = await preparePhoto(source, size, p.bgColor, p.zoom, p.offsetX, p.offsetY, { useBorder, thicknessMm: borderThicknessMm });
         return { url, count };
       }));
 
       const activePhotos = photosForSize.filter(x => x !== null) as { url: string, count: number }[];
       if (activePhotos.length === 0) continue;
 
-      // Add Section Divider if not at top
-      if (curY > MM_TO_PX(15)) {
-        curY += MM_TO_PX(8);
+      if (curY > topMargin + MM_TO_PX(2)) {
+        curY += MM_TO_PX(4);
       }
 
-      // Render Section Header (Optional Labeling)
-      ctx.font = `bold ${MM_TO_PX(4)}px Inter, sans-serif`;
+      ctx.font = `bold ${MM_TO_PX(3.5)}px Inter, sans-serif`;
       ctx.fillStyle = '#cbd5e1';
-      ctx.fillText(spec.label.toUpperCase(), marginX, curY);
-      curY += MM_TO_PX(6);
+      ctx.fillText(spec.label.toUpperCase(), horizontalMargin, curY + MM_TO_PX(3));
+      curY += MM_TO_PX(5);
 
       let colIdx = 0;
-      let startX = (canvas.width - (maxCols * pW + (maxCols - 1) * gap)) / 2;
+      const gridWidth = (maxCols * pW + (maxCols - 1) * gap);
+      const startX = (canvas.width - gridWidth) / 2;
 
       for (const item of activePhotos) {
         for (let i = 0; i < item.count; i++) {
@@ -196,42 +216,60 @@ const App: React.FC = () => {
             imgObj.src = item.url;
           });
 
-          if (colIdx >= maxCols) {
-            colIdx = 0;
-            curY += pH + gap;
-          }
-
-          // Overflow Check
-          if (curY + pH > canvas.height - MM_TO_PX(10)) {
+          if (curY + pH > canvas.height - bottomMargin) {
             const next = createNewPage();
             canvas = next.canvas;
             ctx = next.ctx;
-            curY = MM_TO_PX(15);
-            startX = (canvas.width - (maxCols * pW + (maxCols - 1) * gap)) / 2;
+            curY = topMargin;
             colIdx = 0;
+            
+            ctx.font = `bold ${MM_TO_PX(3)}px Inter, sans-serif`;
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillText(spec.label.toUpperCase() + " (CONT.)", horizontalMargin, curY + MM_TO_PX(3));
+            curY += MM_TO_PX(5);
           }
 
           const drawX = startX + (colIdx * (pW + gap));
           ctx.drawImage(img, drawX, curY, pW, pH);
+          
+          // Outer cut guides
           ctx.strokeStyle = '#f1f5f9';
+          ctx.lineWidth = 1;
           ctx.strokeRect(drawX, curY, pW, pH);
           
           colIdx++;
+          if (colIdx >= maxCols) {
+            colIdx = 0;
+            curY += pH + gap;
+          }
         }
       }
-      // Finish the section offset
-      curY += pH + gap;
+      
+      if (colIdx !== 0) {
+        curY += pH + gap;
+      }
     }
 
     setActiveSheets(pages.map(c => c.toDataURL('image/png', 1.0)));
     setIsProcessing(false);
   };
 
+  const handlePdfDownload = (url: string, index: number) => {
+    const { jsPDF } = jspdf;
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+    doc.addImage(url, 'PNG', 0, 0, 210, 297, undefined, 'FAST');
+    doc.save(`SnapPrint-Page-${index + 1}.pdf`);
+  };
+
   const totalPassport = photos.reduce((acc, p) => acc + p.passportCount, 0);
   const totalStamp = photos.reduce((acc, p) => acc + p.stampCount, 0);
 
   return (
-    <div className="min-h-screen bg-[#fcfcfd] pb-20 font-sans">
+    <div className="min-h-screen bg-[#fcfcfd] pb-20 font-sans text-slate-900">
       <header className="bg-white border-b sticky top-0 z-40 px-6 py-4 flex justify-between items-center shadow-sm no-print">
         <div className="flex items-center gap-2">
           <div className="bg-indigo-600 p-2 rounded-lg shadow-lg">
@@ -363,6 +401,42 @@ const App: React.FC = () => {
                     ))}
                   </div>
                 </div>
+
+                {/* ENHANCEMENT 2: Photo Border Toggle Section */}
+                <div>
+                  <h3 className="text-xs font-black text-slate-900 mb-8 flex items-center gap-3 uppercase tracking-widest">
+                    <Settings className="text-indigo-600 w-5 h-5" /> Photo Border
+                  </h3>
+                  <div className="bg-slate-50 p-6 rounded-[1.5rem] border border-slate-100 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Apply Border</span>
+                      <button 
+                        onClick={() => setUseBorder(!useBorder)}
+                        className={`w-12 h-6 rounded-full transition-all relative ${useBorder ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${useBorder ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+                    {useBorder && (
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                          <span>Thickness</span>
+                          <span>{borderThicknessMm} mm</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0.1" 
+                          max="2" 
+                          step="0.1" 
+                          value={borderThicknessMm} 
+                          onChange={(e) => setBorderThicknessMm(parseFloat(e.target.value))}
+                          className="w-full accent-indigo-600 h-1.5 bg-white rounded-full appearance-none"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="border-t border-slate-50 pt-10">
                   <div className="space-y-4 mb-8">
                      <div className="flex justify-between items-center">
@@ -386,18 +460,18 @@ const App: React.FC = () => {
           <div className="max-w-4xl mx-auto space-y-24 animate-in fade-in zoom-in-95 duration-700">
             <div className="flex flex-col md:flex-row justify-between items-center gap-8 bg-white p-10 rounded-[3rem] border border-slate-100 shadow-2xl no-print">
               <div>
-                <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter italic leading-none">Single Page Output</h2>
-                <p className="text-slate-400 font-black uppercase text-[10px] tracking-[0.3em] mt-3">Combined Biometric Sheet ({activeSheets.length} Pages Total)</p>
+                <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter italic leading-none">Print Preview</h2>
+                <p className="text-slate-400 font-black uppercase text-[10px] tracking-[0.3em] mt-3">Ready for High-Quality Output ({activeSheets.length} Sheets)</p>
               </div>
               <div className="flex gap-4 w-full md:w-auto">
                 <button onClick={() => window.print()} className="flex-1 md:flex-none px-12 py-5 bg-indigo-600 text-white rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 shadow-xl transition-all flex items-center justify-center gap-3">
-                  <Printer size={18} /> Print Sheet
+                  <Printer size={18} /> Print All
                 </button>
               </div>
             </div>
 
             {activeSheets.map((url, idx) => (
-              <div key={idx} className="space-y-8">
+              <div key={idx} className="space-y-8 no-print">
                 <div className="bg-slate-50 rounded-[4rem] p-10 lg:p-20 border-8 border-white shadow-2xl flex justify-center items-start overflow-hidden">
                    <div style={{ transform: 'scale(0.7)', transformOrigin: 'top center', height: 'calc(297mm * 0.7)', width: '210mm' }}>
                       <div className="a4-sheet shadow-2xl ring-1 ring-slate-200">
@@ -405,10 +479,13 @@ const App: React.FC = () => {
                       </div>
                    </div>
                 </div>
-                <div className="text-center no-print">
-                   <a href={url} download={`SnapPrint-Page-${idx+1}.png`} className="inline-flex items-center gap-3 px-10 py-4 bg-white border border-slate-200 rounded-full font-black text-[10px] uppercase tracking-widest hover:border-indigo-600 transition-colors">
-                      <Download size={14} /> Download Page {idx + 1}
+                <div className="flex flex-wrap justify-center gap-4">
+                   <a href={url} download={`SnapPrint-Page-${idx+1}.png`} className="inline-flex items-center gap-3 px-8 py-4 bg-white border border-slate-200 rounded-full font-black text-[10px] uppercase tracking-widest hover:border-indigo-600 transition-colors">
+                      <Download size={14} /> Download PNG
                    </a>
+                   <button onClick={() => handlePdfDownload(url, idx)} className="inline-flex items-center gap-3 px-8 py-4 bg-white border border-slate-200 rounded-full font-black text-[10px] uppercase tracking-widest hover:border-indigo-600 transition-colors">
+                      <FileText size={14} /> Download PDF
+                   </button>
                 </div>
               </div>
             ))}
@@ -418,8 +495,18 @@ const App: React.FC = () => {
 
       <div className="hidden print:block">
         {activeSheets.map((url, idx) => (
-          <div key={idx} style={{ pageBreakAfter: 'always' }}>
-            <img src={url} style={{ width: '210mm', height: '297mm', display: 'block' }} />
+          <div key={idx} className="a4-print-page" style={{ margin: 0, padding: 0, height: '297mm', width: '210mm', overflow: 'hidden' }}>
+            <img 
+              src={url} 
+              style={{ 
+                width: '210mm', 
+                height: '297mm', 
+                display: 'block',
+                margin: 0,
+                padding: 0
+              }} 
+              alt={`Print Page ${idx + 1}`} 
+            />
           </div>
         ))}
       </div>
